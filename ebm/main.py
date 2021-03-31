@@ -49,8 +49,8 @@ def main(args):
             broken_data[mask] += 0.3 * torch.randn(*broken_data.shape, device=device)[mask]
             broken_data = torch.clip(broken_data, 0., 1.)
             # TODO: just an example. You may add more visualization or anything else.
-            img_seq = trainer.inpainting(broken_data.to(device), mask)
-            mse = np.mean((data.numpy() - img_seq[-1]) ** 2, axis=(1, 2, 3))
+            recovered_img = trainer.inpainting(broken_data.to(device), mask)
+            mse = np.mean((data.numpy() - recovered_img) ** 2, axis=(1, 2, 3))
             all_mse.extend(mse.tolist())
             mse = np.mean((data.numpy() - broken_data.cpu().numpy()) ** 2, axis=(1, 2, 3))
             initial_mse.extend(mse.tolist())

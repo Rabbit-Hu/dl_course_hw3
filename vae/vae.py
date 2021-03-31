@@ -17,6 +17,11 @@ class CVAE(nn.Module):
         self.latent_size = latent_size
         self.hidden_size = hidden_size
         # Encoder.
+        '''
+        img   -> fc  ->                   -> fc -> mean    
+                        concat -> encoder                  -> z
+        label -> fc  ->                   -> fc -> logstd 
+        '''
         self.enc_img_fc = nn.Linear(int(np.prod(self.img_size)), self.hidden_size)
         self.enc_label_fc = nn.Linear(self.label_size, self.hidden_size)
         self.encoder = nn.Sequential(
@@ -26,6 +31,11 @@ class CVAE(nn.Module):
         self.z_mean = nn.Linear(2 * self.hidden_size, self.latent_size)
         self.z_logstd = nn.Linear(2 * self.hidden_size, self.latent_size)
         # Decoder.
+        '''
+        latent -> fc ->
+                         concat -> decoder -> reconstruction
+        label  -> fc ->
+        '''
         self.dec_latent_fc = nn.Linear(self.latent_size, self.hidden_size)
         self.dec_label_fc = nn.Linear(self.label_size, self.hidden_size)
         self.decoder = nn.Sequential(

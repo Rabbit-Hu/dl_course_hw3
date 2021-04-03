@@ -20,7 +20,7 @@ def main(args):
         raise NotImplementedError
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     # Model
-    model = MlpBackbone(input_shape=(1, 28, 28), hidden_size=args.hidden_size)
+    model = MlpBackbone(input_shape=(1, 28, 28), hidden_size=512)
     model.to(device)
     # EBM trainer
     trainer = Trainer(model, device, args.buffer_size, args.langevin_k, args.langevin_noise_std,
@@ -66,7 +66,6 @@ if __name__ == "__main__":
     parser.add_argument("--play", action="store_true", default=False)
     parser.add_argument("--load_dir", type=str, default=None)
     parser.add_argument("--batch_size", type=int, default=128)
-    parser.add_argument("--hidden_size", type=int, default=64)
     parser.add_argument("--buffer_size", type=int, default=10000)
     parser.add_argument("--langevin_k", type=int, default=1)
     parser.add_argument("--langevin_noise_std", type=float, default=1)

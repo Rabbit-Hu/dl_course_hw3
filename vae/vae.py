@@ -10,7 +10,8 @@ import os, time
 from matplotlib import pyplot as plt 
 from tqdm import tqdm
 from PIL import Image
-
+from tensorboardX import SummaryWriter
+import time
 
 
 class CVAE(nn.Module):
@@ -117,6 +118,24 @@ def generate_samples(cvae, n_samples_per_class, device):
     return samples
 #########################
 
+def save_samples_image(samples, path="output.png"):
+    sample_images = samples["imgs"]
+    sample_labels = samples["labels"]
+    toPIL = transforms.ToPILImage()
+
+    w_num = 10
+    h_num = int(len(sample_images)/w_num) + 1
+    UNIT_SIZE = 28 # 一张图的大小是200*200
+    GAP = 3
+    target_shape = (w_num * (UNIT_SIZE + GAP), h_num * (UNIT_SIZE + GAP)) # shape[0]表示横坐标，shape[1]表示纵坐标
+    target = Image.new('RGB', target_shape)
+    width = 0
+    for img in sample_images:
+        x, y = int(width%target_shape[0]), int(width/target_shape[0])*(UNIT_SIZE+10) # 左上角坐标，从左到右递增
+        target.paste(toPIL(img), (x, y, x+UNIT_SIZE, y+UNIT_SIZE))
+        width += (UNIT_SIZE+GAP)
+
+    target.save(path)
 
 def main(args):
     np.random.seed(args.seed)
@@ -133,8 +152,16 @@ def main(args):
         raise NotImplementedError
 
     # Configure
-    logdir = args.logdir if args.logdir is not None else "/tmp/cvae_" + time.strftime('%Y-%m-%d-%H-%M-%S')
+    time_str = time.strftime('%Y-%m-%d-%H-%M-%S')
+    logdir = args.logdir if args.logdir is not None else "logs/cvae_" + time_str
     os.makedirs(logdir, exist_ok=True)
+    writer = SummaryWriter(logdir)
+
+    imgdir = args.imgdir if args.imgdir is not None else "imgs/cvae_" + time_str
+    os.makedirs(imgdir, exist_ok=True)
+
+    checkpointdir = args.checkpointdir if args.checkpointdir is not None else "checkpoints/cvae_" + time_str
+    os.makedirs(checkpointdir, exist_ok=True)
 
     label_dim = 10
     img_dim = (1, 28, 28)
@@ -192,30 +219,21 @@ def main(args):
                 loss_sum += loss.data
                 mse_sum += mse_loss.data
                 kl_sum += kl_loss.data
+            
+            loss_sum /= len(dataloader)
+            mse_sum /= len(dataloader)
+            kl_sum /= len(dataloader)
+            writer.add_scalar('loss/TotalLoss', loss_sum, epoch)
+            writer.add_scalar('loss/MSE', mse_sum, epoch)
+            writer.add_scalar('loss/KL', kl_sum, epoch)
             print("Epoch %d, iteration %d: loss=%.6f, mse=%.6f, kl=%.6f" % (epoch, it, loss_sum, mse_sum, kl_sum))
 
             samples = generate_samples(cvae, 10, device)
-            sample_images = samples["imgs"]
-            sample_labels = samples["labels"]
-            plt.figure()
-            toPIL = transforms.ToPILImage()
+            save_samples_image(samples, os.path.join(imgdir, f"epoch{epoch}.png"))
 
-            w_num = 10
-            h_num = int(len(sample_images)/w_num) + 1
-            UNIT_SIZE = 28 # 一张图的大小是200*200
-            GAP = 3
-            target_shape = (w_num * (UNIT_SIZE + GAP), h_num * (UNIT_SIZE + GAP)) # shape[0]表示横坐标，shape[1]表示纵坐标
-            target = Image.new('RGB', target_shape)
-            width = 0
-            print(target_shape)
-            for img in sample_images:
-                x, y = int(width%target_shape[0]), int(width/target_shape[0])*(UNIT_SIZE+10) # 左上角坐标，从左到右递增
-                target.paste(toPIL(img), (x, y, x+UNIT_SIZE, y+UNIT_SIZE))
-                width += (UNIT_SIZE+GAP)
+            checkpoint = {'model': cvae.state_dict(), 'optimizer': optimizer.state_dict}
+            torch.save(checkpoint, os.path.join(checkpointdir, f"epoch{epoch}.pt"))
 
-            plt.imshow(target, cmap='gray')
-            plt.savefig("output.png")
-            
     else:
         assert args.load_path is not None
         checkpoint = torch.load(args.load_path, map_location=device)
@@ -234,6 +252,8 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--num_epochs", type=int, default=50)
     parser.add_argument("--logdir", type=str, default=None)
+    parser.add_argument("--imgdir", type=str, default=None)
+    parser.add_argument("--checkpointdir", type=str, default=None)
     parser.add_argument("--eval", action="store_true", default=False)
     parser.add_argument("--load_path", type=str, default=None)
     args = parser.parse_args()

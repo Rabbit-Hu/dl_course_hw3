@@ -7,6 +7,10 @@ from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST
 from torchvision import transforms
 import os, time
+from matplotlib import pyplot as plt 
+from tqdm import tqdm
+from PIL import Image
+
 
 
 class CVAE(nn.Module):
@@ -53,7 +57,24 @@ class CVAE(nn.Module):
         :return: a batch of latent code of shape (batch_size, self.latent_size)
         '''
         # TODO: compute latent z from images and labels
-        return None  # Placeholder.
+        # print(batch_label.size())
+        out_img = self.enc_img_fc(torch.flatten(batch_img, start_dim=1))
+        out_label = self.enc_label_fc(batch_label)
+        out = torch.cat([out_img, out_label], -1)
+        out = self.encoder(out)
+        z_mean = self.z_mean(out)
+        # print("z_mean.size() = ", z_mean.size())
+        z_logstd = self.z_logstd(out)
+        
+        # sample
+        z_std = torch.exp(z_logstd)
+        noise = torch.randn_like(z_std)
+
+        # memory
+        self.z_mean_val = z_mean
+        self.z_std_val = z_std
+
+        return z_mean + z_std * noise
 
     def decode(self, batch_latent, batch_label):
         '''
@@ -61,7 +82,15 @@ class CVAE(nn.Module):
         :param batch_label: a tensor of shape (batch_size, self.label_size)
         :return: reconstructed results
         '''
-        return None  # Placeholder.
+
+        out_latent = self.dec_latent_fc(batch_latent)
+        out_label = self.dec_label_fc(batch_label)
+        out = torch.cat([out_latent, out_label], -1)
+        out = self.decoder(out)
+
+        out = out.reshape((-1,) + self.img_size)
+
+        return out  # Placeholder.
 
     def sample(self, batch_latent, batch_label):
         '''
@@ -71,6 +100,7 @@ class CVAE(nn.Module):
         '''
         with torch.no_grad():
             # TODO: get samples from the decoder.
+            return self.decode(batch_latent, batch_label)
             pass
         return None  # Placeholder.
 
@@ -115,13 +145,77 @@ def main(args):
     cvae.to(device)
     optimizer = optim.Adam(cvae.parameters(), lr=args.lr)
 
+    # plt.figure()
+    # toPIL = transforms.ToPILImage()
+    # plt.imshow(toPIL(dataset[0][0]), cmap='gray')
+    # plt.savefig("output.png")
+
+    # for images, labels in dataloader:
+    #     plt.figure()
+    #     toPIL = transforms.ToPILImage()
+    #     plt.imshow(toPIL(images[0]), cmap='gray')
+    #     plt.savefig("output.png")
+    #     print('lab =', labels[0])
+    #     break
+
+    def KLLoss(z_mean, z_std):
+        return 0.5 * torch.mean(z_mean ** 2 + z_std ** 2 - 1 - torch.log(z_std))
+
     if not args.eval:
         for name, param in cvae.named_parameters():
             print(name, param.shape)
         prior = torch.distributions.Normal(0, 1)
+
+        criterion = nn.MSELoss()
+
         for epoch in range(args.num_epochs):
             # TODO: Training, logging, saving, visualization, etc.
-            pass
+            loss_sum, mse_sum, kl_sum = 0, 0, 0
+            for it, (images, labels) in tqdm(enumerate(dataloader)):
+                images = images.to(device)
+                labels = labels.to(device)
+
+                labels_onehot = torch.zeros((labels.size(0), label_dim)).to(device)
+                labels_onehot.scatter_(dim=1, index=labels.view(-1, 1), value=1)
+                # print(labels_onehot.size(), labels_onehot)
+
+                optimizer.zero_grad()
+                latent = cvae.encode(images, labels_onehot)
+                recon = cvae.decode(latent, labels_onehot)
+                kl_loss = KLLoss(cvae.z_mean_val, cvae.z_std_val)
+                # TODO: finish loss = MSE + KL
+                mse_loss = criterion(recon, images)
+                loss = mse_loss + kl_loss
+                loss.backward()
+                optimizer.step()
+
+                loss_sum += loss.data
+                mse_sum += mse_loss.data
+                kl_sum += kl_loss.data
+            print("Epoch %d, iteration %d: loss=%.6f, mse=%.6f, kl=%.6f" % (epoch, it, loss_sum, mse_sum, kl_sum))
+
+            samples = generate_samples(cvae, 10, device)
+            sample_images = samples["imgs"]
+            sample_labels = samples["labels"]
+            plt.figure()
+            toPIL = transforms.ToPILImage()
+
+            w_num = 10
+            h_num = int(len(sample_images)/w_num) + 1
+            UNIT_SIZE = 28 # 一张图的大小是200*200
+            GAP = 3
+            target_shape = (w_num * (UNIT_SIZE + GAP), h_num * (UNIT_SIZE + GAP)) # shape[0]表示横坐标，shape[1]表示纵坐标
+            target = Image.new('RGB', target_shape)
+            width = 0
+            print(target_shape)
+            for img in sample_images:
+                x, y = int(width%target_shape[0]), int(width/target_shape[0])*(UNIT_SIZE+10) # 左上角坐标，从左到右递增
+                target.paste(toPIL(img), (x, y, x+UNIT_SIZE, y+UNIT_SIZE))
+                width += (UNIT_SIZE+GAP)
+
+            plt.imshow(target, cmap='gray')
+            plt.savefig("output.png")
+            
     else:
         assert args.load_path is not None
         checkpoint = torch.load(args.load_path, map_location=device)

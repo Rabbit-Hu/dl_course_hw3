@@ -152,16 +152,17 @@ def main(args):
         raise NotImplementedError
 
     # Configure
-    time_str = time.strftime('%Y-%m-%d-%H-%M-%S')
-    logdir = args.logdir if args.logdir is not None else "logs/cvae_" + time_str
-    os.makedirs(logdir, exist_ok=True)
-    writer = SummaryWriter(logdir)
+    if not args.eval:
+        time_str = time.strftime('%Y-%m-%d-%H-%M-%S')
+        logdir = args.logdir if args.logdir is not None else "logs/cvae_" + time_str
+        os.makedirs(logdir, exist_ok=True)
+        writer = SummaryWriter(logdir)
 
-    imgdir = args.imgdir if args.imgdir is not None else "imgs/cvae_" + time_str
-    os.makedirs(imgdir, exist_ok=True)
+        imgdir = args.imgdir if args.imgdir is not None else "imgs/cvae_" + time_str
+        os.makedirs(imgdir, exist_ok=True)
 
-    checkpointdir = args.checkpointdir if args.checkpointdir is not None else "checkpoints/cvae_" + time_str
-    os.makedirs(checkpointdir, exist_ok=True)
+        checkpointdir = args.checkpointdir if args.checkpointdir is not None else "checkpoints/cvae_" + time_str
+        os.makedirs(checkpointdir, exist_ok=True)
 
     label_dim = 10
     img_dim = (1, 28, 28)
@@ -170,7 +171,9 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     cvae = CVAE(img_dim, label_dim, latent_dim)
     cvae.to(device)
-    optimizer = optim.Adam(cvae.parameters(), lr=args.lr)
+    # optimizer = optim.Adam(cvae.parameters(), lr=args.lr)
+    optimizer = optim.SGD(cvae.parameters(), lr=args.lr)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [30, 50, 80], gamma=0.1)
 
     # plt.figure()
     # toPIL = transforms.ToPILImage()
@@ -188,12 +191,20 @@ def main(args):
     def KLLoss(z_mean, z_std):
         return 0.5 * torch.mean(z_mean ** 2 + z_std ** 2 - 1 - torch.log(z_std))
 
+    if args.grade:
+        from grader import Grader
+        grader = Grader()
+
     if not args.eval:
         for name, param in cvae.named_parameters():
             print(name, param.shape)
         prior = torch.distributions.Normal(0, 1)
 
-        criterion = nn.MSELoss()
+        # criterion = nn.MSELoss()
+        criterion = nn.BCELoss()
+
+        best_acc = 0.
+        best_epoch = -1
 
         for epoch in range(args.num_epochs):
             # TODO: Training, logging, saving, visualization, etc.
@@ -212,7 +223,7 @@ def main(args):
                 kl_loss = KLLoss(cvae.z_mean_val, cvae.z_std_val)
                 # TODO: finish loss = MSE + KL
                 mse_loss = criterion(recon, images)
-                loss = mse_loss + kl_loss
+                loss = mse_loss + kl_loss # changed
                 loss.backward()
                 optimizer.step()
 
@@ -231,8 +242,21 @@ def main(args):
             samples = generate_samples(cvae, 10, device)
             save_samples_image(samples, os.path.join(imgdir, f"epoch{epoch}.png"))
 
-            checkpoint = {'model': cvae.state_dict(), 'optimizer': optimizer.state_dict}
+            checkpoint = {'model': cvae.state_dict(), 'optimizer': optimizer.state_dict()}
             torch.save(checkpoint, os.path.join(checkpointdir, f"epoch{epoch}.pt"))
+
+            if args.grade:
+                cvae.eval()
+                samples = generate_samples(cvae, 1000, device)
+                acc = grader.grade(samples)
+                writer.add_scalar('grade/accuracy', acc, epoch)
+                print("Epoch %d: accuracy=%.6f" % (epoch, acc))
+
+                if acc > best_acc:
+                    torch.save(checkpoint, os.path.join(checkpointdir, "best.pt"))
+                    best_acc = acc
+                    best_epoch = epoch
+        print(f"Best accuracy: {best_acc}, at epoch {best_epoch}")
 
     else:
         assert args.load_path is not None
@@ -248,13 +272,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dataset", choices=["mnist"], default="mnist")
-    parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument("--lr", type=float, default=10)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--num_epochs", type=int, default=50)
     parser.add_argument("--logdir", type=str, default=None)
     parser.add_argument("--imgdir", type=str, default=None)
     parser.add_argument("--checkpointdir", type=str, default=None)
     parser.add_argument("--eval", action="store_true", default=False)
+    parser.add_argument("--grade", action="store_true", default=False)
     parser.add_argument("--load_path", type=str, default=None)
     args = parser.parse_args()
     main(args)
